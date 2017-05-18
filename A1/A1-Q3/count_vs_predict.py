@@ -14,6 +14,13 @@ import tensorflow as tf
 
 from process_data import process_data
 
+
+# =-=-=-=-= Global Parameters =-=-=-=-=
+
+
+USE_PREDICT_INSTEAD_OF_COUNT = False
+USE_UPDATE_IN_PLACE_INSTEAD_OF_MATRIX_ADD = True
+
 VOCAB_SIZE = 1000  # 50000
 BATCH_SIZE = 128
 EMBED_SIZE = 128  # dimension of the word embedding vectors
@@ -23,8 +30,35 @@ LEARNING_RATE = 0.01
 NUM_TRAIN_STEPS = 10000
 WEIGHTS_FLD = 'processed/'
 SKIP_STEP = 2
-USE_PREDICT_INSTEAD_OF_COUNT = False
-USE_UPDATE_IN_PLACE_INSTEAD_OF_MATRIX_ADD = True
+
+
+# =-=-=-=-= Shared Func =-=-=-=-=
+
+
+def save_embed_matrix(sess, embed_matrix):
+    """
+    保存词向量矩阵
+    """
+    # code to visualize the embeddings. uncomment the below to visualize embeddings
+    final_embed_matrix = sess.run(embed_matrix)
+    # it has to variable. constants don't work here. you can't reuse model.embed_matrix
+    embedding_var = tf.Variable(final_embed_matrix[:1000], name='embedding')
+    sess.run(embedding_var.initializer)
+    config = projector.ProjectorConfig()
+    summary_writer = tf.summary.FileWriter(WEIGHTS_FLD)
+    # add embedding to the config file
+    embedding = config.embeddings.add()
+    embedding.tensor_name = embedding_var.name
+    # link this tensor to its metadata file, in this case the first 500 words of vocab
+    embedding.metadata_path = WEIGHTS_FLD + 'vocab_1000.tsv'
+    # saves a configuration file that TensorBoard will read during startup.
+    projector.visualize_embeddings(summary_writer, config)
+    saver_embed = tf.train.Saver([embedding_var])
+    # 单独保存包含词向量的Session数据为Checkpoint
+    saver_embed.save(sess, WEIGHTS_FLD + 'model3.ckpt', 1)
+
+
+# =-=-=-=-= Predict Model =-=-=-=-=
 
 
 class SkipGramModel:
@@ -94,25 +128,6 @@ class SkipGramModel:
         self._create_summaries()
 
 
-def save_embed_matrix(sess, embed_matrix):
-    # code to visualize the embeddings. uncomment the below to visualize embeddings
-    final_embed_matrix = sess.run(embed_matrix)  # 更新词向量矩阵
-    # it has to variable. constants don't work here. you can't reuse model.embed_matrix
-    embedding_var = tf.Variable(final_embed_matrix[:1000], name='embedding')
-    sess.run(embedding_var.initializer)
-    config = projector.ProjectorConfig()
-    summary_writer = tf.summary.FileWriter(WEIGHTS_FLD)
-    # add embedding to the config file
-    embedding = config.embeddings.add()
-    embedding.tensor_name = embedding_var.name
-    # link this tensor to its metadata file, in this case the first 500 words of vocab
-    embedding.metadata_path = WEIGHTS_FLD + 'vocab_1000.tsv'
-    # saves a configuration file that TensorBoard will read during startup.
-    projector.visualize_embeddings(summary_writer, config)
-    saver_embed = tf.train.Saver([embedding_var])
-    saver_embed.save(sess, WEIGHTS_FLD + 'model3.ckpt', 1)  # 单独保存包含词向量的Session数据为Checkpoint
-
-
 def do_predict(model, batch_gen, num_train_steps):
     saver = tf.train.Saver()  # defaults to saving all variables - in this case embed_matrix, nce_weight, nce_bias
     with tf.Session() as sess:
@@ -138,41 +153,60 @@ def do_predict(model, batch_gen, num_train_steps):
                 save_embed_matrix(sess, model.embed_matrix)
 
 
+# =-=-=-=-= Count Model =-=-=-=-=
+
+
 def do_count(batch_gen, num_train_steps):
     with tf.Session() as sess:
-        co_occurrence_matrix = tf.Variable(tf.zeros([VOCAB_SIZE, VOCAB_SIZE], dtype=tf.int32),
-                                           name='co_occurrence_matrix')
+        # 构造维度为 VOCAB_SIZE x VOCAB_SIZE 的超大词频表
+        co_occurrence_matrix = tf.Variable(tf.zeros([VOCAB_SIZE, VOCAB_SIZE], dtype=tf.int32), name='co_occurrence')
+        # 初始化所有变量
         sess.run(tf.global_variables_initializer())
 
-        if USE_UPDATE_IN_PLACE_INSTEAD_OF_MATRIX_ADD:  # 方法一：直接原地更新
+        # 更新词频表方法一：直接原地更新
+        if USE_UPDATE_IN_PLACE_INSTEAD_OF_MATRIX_ADD:
             for step in range(num_train_steps):
                 centers, targets = next(batch_gen)
                 for index in range(BATCH_SIZE):
+                    # 找到要更新的目标位置
                     x = int(centers[index])
                     y = int(targets[index][0])
+                    # 提取出要更新的行
                     row = tf.gather(co_occurrence_matrix, x)
+                    # 构造这行的新数据
                     new_row = tf.concat([row[:y], [co_occurrence_matrix[x][y]], row[y+1:]], axis=0)
+                    # 使用 tf.scatter_update 方法进正行替换
                     co_occurrence_matrix.assign(tf.scatter_update(co_occurrence_matrix, x, new_row))
                 if (step + 1) % SKIP_STEP == 0:
                     do_pca(co_occurrence_matrix, sess, step)
 
-        else:  # 方法二：使用矩阵加法
+        # 更新词频表方法二：使用矩阵加法
+        else:
             for step in range(num_train_steps):
                 centers, targets = next(batch_gen)
                 for index in range(BATCH_SIZE):
+                    # 找到要更新的目标位置
                     pos = [int(centers[index]), int(targets[index][0])]
+                    # 构造一个只有目标位置为1的矩阵（借助稀疏矩阵创建）
                     pos_matrix = tf.sparse_tensor_to_dense(
                         tf.SparseTensor(indices=[pos], values=[1], dense_shape=[VOCAB_SIZE, VOCAB_SIZE]))
+                    # 用 Variable.assign_add 将两个矩阵相加
                     co_occurrence_matrix.assign_add(pos_matrix)
                 if (step + 1) % SKIP_STEP == 0:
                     do_pca(co_occurrence_matrix, sess, step)
 
 
 def do_pca(co_occurrence_matrix, sess, step):
+    # 将输入矩阵做奇异值分解
     s, u, v = tf.svd(tf.cast(co_occurrence_matrix, tf.float32))
+    # 使用奇异值将矩阵降维到 VOCAB_SIZE x EMBED_SIZE
     embed_matrix = tf.matmul(u[:, :EMBED_SIZE], tf.diag(s[:EMBED_SIZE]))
+    # 保存得到的嵌入矩阵
     save_embed_matrix(sess, embed_matrix)
     print('%s => Step %s' % (datetime.now(), step))
+
+
+# =-=-=-=-= Main Func =-=-=-=-=
 
 
 def main():
