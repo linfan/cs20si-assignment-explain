@@ -1,4 +1,7 @@
 .idea/
 *.iml
 *.pyc
+*.zip
+*.tar
+*.tgz
 __pycache__/
