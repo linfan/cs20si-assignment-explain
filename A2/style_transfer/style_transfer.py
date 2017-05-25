@@ -175,9 +175,7 @@ def train(model, generated_image, initial_image):
             if (index + 1) % skip_step == 0:
                 ###############################
                 # TO DO: obtain generated image and loss
-                gen_image, total_loss, summary = sess.run([generated_image, model['total_loss'],
-                                                           model['summary_op']])
-
+                gen_image, total_loss, summary = sess.run([generated_image, model['total_loss'], model['summary_op']])
                 ###############################
                 gen_image = gen_image + MEAN_PIXELS
                 writer.add_summary(summary, global_step=index)
@@ -199,25 +197,27 @@ def main():
         # look like both the content image and the style image
         input_image = tf.Variable(np.zeros([1, IMAGE_HEIGHT, IMAGE_WIDTH, 3]), dtype=tf.float32)
 
+    # 下载 VGG Net 模型数据
     utils.download(VGG_DOWNLOAD_LINK, VGG_MODEL, EXPECTED_BYTES)
+    # 还原模型每一层训练完成的参数
     model = vgg_model.load_vgg(VGG_MODEL, input_image)
     model['global_step'] = tf.Variable(0, dtype=tf.int32, trainable=False, name='global_step')
 
+    # 输入数据归一化
     content_image = utils.get_resized_image(CONTENT_IMAGE, IMAGE_HEIGHT, IMAGE_WIDTH)
     content_image = content_image - MEAN_PIXELS
     style_image = utils.get_resized_image(STYLE_IMAGE, IMAGE_HEIGHT, IMAGE_WIDTH)
     style_image = style_image - MEAN_PIXELS
 
-    model['content_loss'], model['style_loss'], model['total_loss'] = _create_losses(model,
-                                                                                     input_image, content_image,
-                                                                                     style_image)
+    model['content_loss'], model['style_loss'], model['total_loss'] = _create_losses(model, input_image,
+                                                                                     content_image, style_image)
     ###############################
     # TO DO: create optimizer
-    model['optimizer'] = tf.train.AdamOptimizer(LR).minimize(model['total_loss'],
-                                                             global_step=model['global_step'])
+    model['optimizer'] = tf.train.AdamOptimizer(LR).minimize(model['total_loss'], global_step=model['global_step'])
     ###############################
     model['summary_op'] = _create_summary(model)
 
+    # 使用随机噪声初始化目标图片
     initial_image = utils.generate_noise_image(content_image, IMAGE_HEIGHT, IMAGE_WIDTH, NOISE_RATIO)
     train(model, input_image, initial_image)
 
