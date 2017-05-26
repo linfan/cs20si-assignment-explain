@@ -153,6 +153,7 @@ def train():
 
         iteration = model.global_step.eval()
         total_loss = 0
+
         while True:
             skip_step = _get_skip_step(iteration)
             bucket_id = _get_random_bucket(train_buckets_scale)
@@ -174,6 +175,8 @@ def train():
                     _eval_test_set(sess, model, test_buckets)
                     start = time.time()
                 sys.stdout.flush()
+            if iteration > config.MAX_ITERATION:
+                break
 
 
 def _get_user_input():
@@ -231,7 +234,7 @@ def chat():
                 break
             output_file.write('HUMAN ++++ ' + line + '\n')
             # Get token-ids for the input sentence.
-            token_ids = data.sentence2id(enc_vocab, str(line))
+            token_ids = data.sentence2id(enc_vocab, str(line).encode())
             if len(token_ids) > max_length:
                 print('Max length I can handle is:', max_length)
                 line = _get_user_input()

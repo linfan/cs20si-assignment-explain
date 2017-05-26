@@ -31,6 +31,7 @@ START_ID = 2
 EOS_ID = 3
 
 TESTSET_SIZE = 25000
+MAX_ITERATION = 300000
 
 # model parameters
 """ Train encoder length distribution:
