@@ -174,7 +174,7 @@ def do_count(batch_gen, num_train_steps):
                     # 提取出要更新的行
                     row = tf.gather(co_occurrence_matrix, x)
                     # 构造这行的新数据
-                    new_row = tf.concat([row[:y], [co_occurrence_matrix[x][y]], row[y+1:]], axis=0)
+                    new_row = tf.concat([row[:y], [co_occurrence_matrix[x][y] + 1], row[y+1:]], axis=0)
                     # 使用 tf.scatter_update 方法进正行替换
                     co_occurrence_matrix.assign(tf.scatter_update(co_occurrence_matrix, x, new_row))
                 if (step + 1) % SKIP_STEP == 0:
